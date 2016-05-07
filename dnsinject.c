@@ -51,7 +51,9 @@ struct dns_question {
 };
 
 
-// http://www.microhowto.info/howto/get_the_ip_address_of_a_network_interface_in_c_using_siocgifaddr.html
+/*
+ * http://www.microhowto.info/howto/get_the_ip_address_of_a_network_interface_in_c_using_siocgifaddr.html
+ */
 void get_ip_of_attacker(char *if_name, char *ip) {
 	struct ifreq ifr;
 
@@ -82,7 +84,6 @@ void get_ip_of_attacker(char *if_name, char *ip) {
 
 
 /*
- * Calculates a checksum for a given header
  * http://web.eecs.utk.edu/~cs594np/unp/checksum.html
  */
 unsigned short find_checksum(unsigned short *buf, int len) {
@@ -107,6 +108,7 @@ unsigned short find_checksum(unsigned short *buf, int len) {
 
 /**
  * Sends a dns answer using raw sockets
+ * http://www.binarytides.com/raw-sockets-c-code-linux/
  */
 void send_dns_answer(char* ip, u_int16_t port, char* packet, int packlen) {
 	struct sockaddr_in to_addr;
@@ -215,6 +217,7 @@ void dns_spoof(unsigned char *args, const struct pcap_pkthdr *header, const u_ch
 	reply_packet_size = size;
 
 	// IP datatgram
+	// http://www.binarytides.com/raw-sockets-c-code-linux/
 	reply_ip_hdr = (struct ip *) reply_packet;
 	reply_udp_hdr = (struct udphdr *) (reply_packet + sizeof (struct ip));
 	reply_ip_hdr->ip_hl = 5; //header length
