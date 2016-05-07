@@ -283,6 +283,7 @@ int main(int argc, char *argv[])
 	char errbuf[PCAP_ERRBUF_SIZE];	/* error buffer */
 	struct bpf_program fp;			/* The compiled filter expression */
 	char *bpf_filter_exp;			/* The filter expression */
+	char *filter_exp;
 	bpf_u_int32 net;				/* The IP of our sniffing device */
 	bpf_u_int32 mask;				/* The netmask of our sniffing device */
 	pcap_t *handle;					/* packet capture handle */
@@ -327,16 +328,15 @@ int main(int argc, char *argv[])
 			read_file = 1;
 			break;
 		case 'h':
-			printf("help: dnsinject [-i interface] [-r file] [-s string] "
-			       "expression\n-i  Listen on network device <interface> "
-			       "(e.g., eth0). If not specified, mydump selects the default "
-			       "interface to listen on.\n-r  Read packets from <file>\n-s  "
-			       "Keep only packets that contain <string> in their payload."
-			       "\n<expression> is a BPF filter that specifies which packets "
-			       "will be dumped. If no filter is given, all packets seen on "
-			       "the interface (or contained in the trace) will be dumped. "
-			       "Otherwise, only packets matching <expression> will be "
-			       "dumped.\n");
+			printf("help: dnsinject [-i interface] [-f hostnames] <expression>\n"
+			       "-i  Listen on network device <interface> "
+			       "(e.g., eth0). If not specified, dnsinject selects the default "
+			       "interface to listen on.\n-f  Spoof only the domains mentioned "
+			       "in the given file. If no file is provided all the DNS requests "
+			       "coming to the attacker will be spoofed\n<expression> is a BPF "
+			       "filter that specifies a subset of the traffic to be monitored. "
+			       "This option is useful for targeting a single or a set of "
+			       "particular victims\n");
 			exit(EXIT_SUCCESS);
 			break;
 		default:
@@ -399,13 +399,6 @@ int main(int argc, char *argv[])
 	}
 
 
-	// current = head;
-	// while (current != NULL) {
-	// 	printf("%s\t%s\n", current->spoof_ip, current->spoof_domain);
-	// 	current = current->next;
-	// }
-
-
 	/*
 	 * get IPv4 network numbers and corresponding network mask
 	 * (the network number is the IPv4 address ANDed with the network mask
@@ -419,75 +412,38 @@ int main(int argc, char *argv[])
 		mask = 0;
 	}
 
-	/*
-	 * create handle for the file provided by user,
-	 * or open device to read.
-	 */
-	// if (read_file == 1) {
-	// handle = pcap_open_offline(file_name, errbuf);   //call pcap library function
-	// if (handle == NULL) {
-	// 	fprintf(stderr, "Couldn't open pcap file %s: %s\n", file_name, errbuf);
-	// 	exit(EXIT_FAILURE);
-	// } else {
-	// 	printf("Opened file %s\n\n", file_name);
-	// }
-	// } else {
-	// 	handle = pcap_open_live(dev, BUFSIZ, PROMISC, READ_TIME_OUT, errbuf);
-	// 	if (handle == NULL) {
-	// 		fprintf(stderr, "Couldn't open device %s: %s\n", dev, errbuf);
-	// 		exit(EXIT_FAILURE);
-	// 	} else {
-	// 		printf("Listening on device: %s\n\n", dev);
-	// 	}
-	// }
-
 	handle = pcap_open_live(dev, BUFSIZ, PROMISC, READ_TIME_OUT, errbuf);
 	if (handle == NULL) {
 		fprintf(stderr, "Couldn't open device %s: %s\n", dev, errbuf);
-		exit(EXIT_FAILURE);
+		goto free_list;
 	} else {
 		printf("Listening on device: %s\n\n", dev);
 	}
 
-	// /* fail if the device doesn't supply Ethernet headers */
-	// if (pcap_datalink(handle) != DLT_EN10MB) {
-	// 	fprintf(stderr, "Device %s doesn't provide Ethernet headers - not "
-	// 	        "supported\n", dev);
-	// 	exit(EXIT_FAILURE);
-	// }
-
-	/* if user specified am expression, compile and set bpf filter */
-	// if (bpf_filter) {
-	// 	/* compile the program */
-	// 	if (pcap_compile(handle, &fp, bpf_filter_exp, 0, net) == -1) {
-	// 		fprintf(stderr, "Couldn't parse filter %s: %s\n", bpf_filter_exp,
-	// 		        pcap_geterr(handle));
-	// 		exit(EXIT_FAILURE);
-	// 	}
-
-	// 	/* apply the filter */
-	// 	if (pcap_setfilter(handle, &fp) == -1) {
-	// 		fprintf(stderr, "Couldn't install filter %s: %s\n", bpf_filter_exp,
-	// 		        pcap_geterr(handle));
-	// 		exit(EXIT_FAILURE);
-	// 	}
-	// }
-
 	sprintf(dns_filter, "udp and dst port domain");
 
+	if (bpf_filter == 1) {
+		filter_exp = malloc(strlen(dns_filter) + strlen(bpf_filter_exp) + 6);
+		strcpy(filter_exp, dns_filter);
+		strcat(filter_exp, " and ");
+		strcat(filter_exp, bpf_filter_exp);
+	} else {
+		filter_exp = malloc(strlen(dns_filter) + 1);
+		strcpy(filter_exp, dns_filter);
+	}
+
 	/* compile the program */
-	// if (pcap_compile(handle, &fp, dns_filter, 0, net) == -1) {
-	if (pcap_compile(handle, &fp, dns_filter, 0, 0) == -1) {
-		fprintf(stderr, "Couldn't parse filter %s: %s\n", dns_filter,
+	if (pcap_compile(handle, &fp, filter_exp, 0, 0) == -1) {
+		fprintf(stderr, "Couldn't parse filter %s: %s\n", filter_exp,
 		        pcap_geterr(handle));
-		exit(EXIT_FAILURE);
+		goto free_filter;
 	}
 
 	/* apply the filter */
 	if (pcap_setfilter(handle, &fp) == -1) {
-		fprintf(stderr, "Couldn't install filter %s: %s\n", dns_filter,
+		fprintf(stderr, "Couldn't install filter %s: %s\n", filter_exp,
 		        pcap_geterr(handle));
-		exit(EXIT_FAILURE);
+		goto free_filter;
 	}
 
 	/* set our callback function with infinite pcap_loop */
@@ -497,6 +453,8 @@ int main(int argc, char *argv[])
 	pcap_freecode(&fp);
 	pcap_close(handle);
 
+free_filter:
+	free(filter_exp);
 free_list:
 	if (read_file == 1) {
 		current = head;
