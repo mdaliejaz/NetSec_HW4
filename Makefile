@@ -1,8 +1,8 @@
 all: dnsinject
 
-mydump: dnsinject.c
+dnsinject: dnsinject.c
 	@echo "Generating dnsinject executable"
-	gcc -w dnsinject.c -lpcap -o dnsinject
+	gcc dnsinject.c -o dnsinject -lpcap
 
 clean:
 	@echo "Cleaning dnsinject executable"

