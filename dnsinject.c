@@ -18,7 +18,7 @@
 #include <resolv.h>
 #include <sys/ioctl.h>
 #include <net/if.h>
-#include <unistd.h>
+
 
 #define PROMISC 1
 #define READ_TIME_OUT 0
