@@ -99,7 +99,6 @@ void dns_detect(struct node *database, const struct pcap_pkthdr *header, const u
 	unsigned char split_ip[4];
 	struct in_addr dest, src;
 	int spoof_it = 0;
-	// struct node *current, *new_node;
 	int attack_detected = 0;
 	char *new_ip;
 	int matched, curr_index, possible_attack;
@@ -108,8 +107,10 @@ void dns_detect(struct node *database, const struct pcap_pkthdr *header, const u
 	int id_found;
 	char *temp;
 	char *hex_id;
-
-	printf("in method\n");
+	int epoch_time;				/* for calculating time for packet */
+	time_t epoch_time_as_time_t;
+	struct tm * timeinfo;
+	int index_in_db;
 
 	/* define ethernet header */
 	ether = (struct ethernet_header*)(packet);
@@ -153,17 +154,8 @@ void dns_detect(struct node *database, const struct pcap_pkthdr *header, const u
 	char identifier[100];
 	char str[2];
 	u_short id = *((u_short *)dns_hdr->id);
-	printf("hex - ");
-	printf("%02x", (unsigned int) *((dns_hdr->id)));
-	printf("%02x", (unsigned int) *((dns_hdr->id)+1));
-  	printf("\n");
+	hex_id = dns_hdr->id;
 	sprintf(identifier, "%hu", *((u_short *)dns_hdr->id));
-	printf("The request is: %s (id = %s)\n", request, identifier);
-
-
-	printf("the number of answers is %hu\n", htons(*((unsigned short int*)(dns_hdr->ancount))));
-
-	// printf("ancount - %d", *((unsigned short*)(dns_hdr->ancount)));
 	possible_attack = 0;
 	k = 0;
 	for (i = 0; i < htons(*((u_short *)(dns_hdr->ancount))); i++) {
@@ -186,14 +178,9 @@ void dns_detect(struct node *database, const struct pcap_pkthdr *header, const u
 			// add to db
 			for (i = 0; i < array_size; i++) {
 				if (id == database[i].id) {
+					index_in_db = i;
 					possible_attack = 1;
 					id_found = 1;
-					// for (j = 0; j < database[i].list_size; j++) {
-					// 	if (!strcmp(database[i].ip[j], IP)) {
-					// 		printf("IP existed\n");
-					// 		ip_exists = 1;
-					// 	}
-					// }
 				}
 			}
 
@@ -208,7 +195,6 @@ void dns_detect(struct node *database, const struct pcap_pkthdr *header, const u
 	}
 
 	if (id_found == 0) {
-		printf("Entering new ID\n");
 		for (i = 0; i < k; i++) {
 			database[array_size].id = id;
 			strcpy(database[array_size].ip[i], new_ip_list[i]);
@@ -218,63 +204,35 @@ void dns_detect(struct node *database, const struct pcap_pkthdr *header, const u
 	}
 
 	if (possible_attack == 1) {
-		printf("hex ID %s\n", hex_id);
-		printf("Attack detected.\n");
+		epoch_time = header->ts.tv_sec;
+		epoch_time_as_time_t = epoch_time;
+		timeinfo = localtime(&epoch_time_as_time_t);
+
+		printf("\nDNS poisoning attempt!!!\n");
+		printf("Timestamp: %s", asctime(timeinfo));
+		printf("TXID: 0x");
+		printf("%x", (int)(*(unsigned char*)(hex_id)));
+		printf("%x\t", (int)(*(unsigned char*)(hex_id + 1)));
+		printf("Request: %s\n", request);
+		printf("Answer1 [");
+		for(i = 0; i< database[index_in_db].list_size; i++) {
+			if(i+1 == database[index_in_db].list_size) {
+				printf("%s", database[index_in_db].ip[i]);
+			} else {
+				printf("%s, ", database[index_in_db].ip[i]);
+			}
+		}
+		printf("]\n");
+		printf("Answer2 [");
+		for(i = 0; i< k; i++) {
+			if(i+1 == k) {
+				printf("%s", new_ip_list[i]);
+			} else {
+				printf("%s, ", new_ip_list[i]);
+			}
+		}
+		printf("]\n");
 	}
-
-	// printf("qname - %s\n", question.qname);
-
-	// printf("qtype - %s\n", question.qtype);
-
-	// printf("req - %s\n", request);
-
-
-	// answer = (struct dns_answer*)(((char*) question.qname) + strlen(request) + 4 + 1);
-	// answer->type = *((char *)answer + sizeof(u_short));
-	// printf("type %u\n", answer->type);
-	// printf("ans name %s\n", answer->name);
-	// answer->name = ((char*) dns_hdr) + sizeof(struct dns_header) + strlen(question.qname) + 4;
-	// answer = (struct dns_answer*) Questionstion + strlen(question.qname) + 4;
-	// answer->type = (char *)(answer + sizeof(u_short));
-	// answer->rd_length = (char *)((char *)answer + sizeof(u_short) + 6);
-	// answer->r_data = (char *)((char *)answer + sizeof(u_short) + 8);
-
-	// printf("***type %u\n", (char *)answer + strlen(request));
-	// printf("***type %s\n", answer->type);
-	// printf("***rd_length %s\n", answer->rd_length);
-	// printf("***r_data %s\n", answer->r_data);
-
-	// curr_index = start_db_index;
-	// while (curr_index != end_db_index) {
-	// 	if (!strcmp(dns_hdr->id, database[curr_index].id)) {
-	// 		i = 0;
-	// 		matched = 0;
-	// 		while(database[curr_index].ip[i] != NULL && i < 10) {
-	// 			if(!strcmp(database[curr_index].ip[i], request)) {
-	// 				matched = 1;
-	// 				// matched
-	// 			}
-	// 		}
-	// 		if (matched == 0 && i < 10) {
-	// 			memcpy(database[curr_index].ip[i], , strlen());
-	// 			(current->ip)[i] = new_ip;
-	// 			current->list_size += 1;
-	// 		}
-	// 		attack_detected = 1;
-	// 		if(list_size > 1) {
-	// 			printf("possible attack\n");
-	// 		}
-	// 	}
-	// 	current = current->next;
-	// }
-	// if (attack_detected == 0) {
-	// 	new_node = malloc(sizeof(struct node));
-	// 	memcpy(new_node->id, dns_hdr->id, 2);
-	// 	new_ip = (char *)malloc(32);
-	// 	memcpy(new_ip, request, strlen(request));
-	// 	(new_node->ip)[0] = new_ip;
-	// 	new_node->list_size += 1;
-	// }
 }
 
 int main(int argc, char *argv[])
