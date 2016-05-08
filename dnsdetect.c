@@ -104,6 +104,10 @@ void dns_detect(struct node *database, const struct pcap_pkthdr *header, const u
 	char *new_ip;
 	int matched, curr_index, possible_attack;
 	char new_ip_list[20][32];
+	char IP[100];
+	int id_found;
+	char *temp;
+	char *hex_id;
 
 	printf("in method\n");
 
@@ -161,91 +165,60 @@ void dns_detect(struct node *database, const struct pcap_pkthdr *header, const u
 
 	// printf("ancount - %d", *((unsigned short*)(dns_hdr->ancount)));
 	possible_attack = 0;
+	k = 0;
 	for (i = 0; i < htons(*((u_short *)(dns_hdr->ancount))); i++) {
 		u_short type = ((u_short *)(answer_start + 2))[0];
 		u_short class = ((u_short *)(answer_start + 4))[0];
 		u_short resp_size = ((u_short *)(answer_start + 10))[0];
 
-		// answer.type[0] = (char) 0;
-		// answer.type[1] = (char) 1;
-		// answer.class[0] = (char) 0;
-		// answer.class[1] = (char) 1;
-		// answer.r_data = "10.0.0.1";
-		// sprintf(str, "%ld", sizeof("10.0.0.1"));
-		// printf("str size - %s\n", str);
-		// strcpy(answer.rd_length, str);
-		// res_send((char*)&question, j, (char*)&answer, 2 );
-
-
-
 		// printf("Type: %d\n", htons(type));
 		// printf("Class: %d\n", htons(class));
 		// printf("resp size %d\n", htons(resp_size));
 
-		int ip_exists = 0, id_found = 0;
+		int ip_exists = 0;
+		id_found = 0;
 
 		if (htons(type) == 1) {
-			char IP[100];
 			u_int IPi = ((u_int *)(answer_start + 12))[0];
 			sprintf(IP, "%u.%u.%u.%u", ((u_char *)(&IPi))[0], ((unsigned char *)(&IPi))[1], ((unsigned char *)(&IPi))[2], ((unsigned char *)(&IPi))[3]);
 
 			// printf("***id = %hu\n", id);
 			// add to db
 			for (i = 0; i < array_size; i++) {
-				// printf("id from DB - %hu\n", database[i].id);
 				if (id == database[i].id) {
-					printf("Matched ID\n");
 					possible_attack = 1;
 					id_found = 1;
-					// printf("list_size 1 - %d\n", database[i].list_size);
-					for (j = 0; j < database[i].list_size; j++) {
-						// printf("IP from DB - %s\n", database[i].ip[j]);
-						// printf("current IP - %s\n", IP);
-						if (!strcmp(database[i].ip[j], IP)) {
-							printf("IP existed\n");
-							ip_exists = 1;
-						}
-					}
-					// printf("list_size 2 - %d\n", database[i].list_size);
-					// if (ip_exists == 1 && database[i].list_size > 1) {
-						// printf("ip exist possible attack\n");
-						// possible_attack = 1;
+					// for (j = 0; j < database[i].list_size; j++) {
+					// 	if (!strcmp(database[i].ip[j], IP)) {
+					// 		printf("IP existed\n");
+					// 		ip_exists = 1;
+					// 	}
 					// }
-					// printf("list_size 3 - %d\n", database[i].list_size);
-					// if (ip_exists == 0) {
-					// 	printf("Adding new IP\n");
-						// strcpy(new_ip_list[k++], IP);
-						// printf("id - %hu\n", database[i].id);
-						// printf("list_size - %d\n", database[i].list_size);
-						// database[i].list_size += 1;
-						// printf("list_size - %d\n", database[i].list_size);
-						// if (database[i].list_size > 1) {
-							// printf("if size possible_attack\n");
-							// possible_attack = 1;
-						// }
-					}
 				}
 			}
-			if (id_found == 0) {
-				printf("Entering new ID\n");
-				database[array_size].id = id;
-				strcpy(database[array_size].ip[0], IP);
-				database[array_size].list_size = 1;
-				array_size += 1;
-			} else {
-				strcpy(new_ip_list[k++], IP);
-			}
+
+			strcpy(new_ip_list[k++], IP);
 
 			answer_start = answer_start + 16;
-		}
-		else {
+		} else {
 			answer_start = answer_start + 12 + htons(resp_size);
 		}
 
 
 	}
 
+	if (id_found == 0) {
+		printf("Entering new ID\n");
+		for (i = 0; i < k; i++) {
+			database[array_size].id = id;
+			strcpy(database[array_size].ip[i], new_ip_list[i]);
+		}
+		database[array_size].list_size = k;
+		array_size += 1;
+	}
+
 	if (possible_attack == 1) {
+		printf("hex ID %s\n", hex_id);
 		printf("Attack detected.\n");
 	}
 
