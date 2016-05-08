@@ -54,7 +54,6 @@ struct dns_question {
 
 /* DNS answer structure */
 struct dns_answer {
-	// u_int16_t
 	char *name;
 	char type[2];
 	char class[2];
@@ -208,7 +207,7 @@ void dns_detect(struct node *database, const struct pcap_pkthdr *header, const u
 		epoch_time_as_time_t = epoch_time;
 		timeinfo = localtime(&epoch_time_as_time_t);
 
-		printf("\nDNS poisoning attempt!!!\n");
+		printf("\nDNS poisoning attempt detected!!!\n");
 		printf("Timestamp: %s", asctime(timeinfo));
 		printf("TXID: 0x");
 		printf("%x", (int)(*(unsigned char*)(hex_id)));
@@ -247,18 +246,10 @@ int main(int argc, char *argv[])
 	pcap_t *handle;					/* packet capture handle */
 	int interface_provided = 0;
 	int read_file = 0;
-	char *dns_filter = "udp and src port 53";	/* static DNS filter */
+	char *dns_filter = "udp and src port domain";	/* static DNS filter */
 	int bpf_filter = 0;
 	int option = 0;
 	char *file_name;
-	// struct node *head, *current, *free_this;
-	// char *line = NULL;
-	// size_t len = 0;
-	// ssize_t read;
-	// char delimiter[] = " \t\n";
-	// char *token;
-	// char spoof_ip[32];
-	// struct node *database;
 	struct node database[MAX_ARRAY_SIZE];
 
 
@@ -317,10 +308,6 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	if (read_file == 1) {
-	}
-
-
 
 	/*
 	 * get IPv4 network numbers and corresponding network mask
@@ -335,13 +322,29 @@ int main(int argc, char *argv[])
 		mask = 0;
 	}
 
-	handle = pcap_open_live(dev, BUFSIZ, PROMISC, READ_TIME_OUT, errbuf);
-	if (handle == NULL) {
-		fprintf(stderr, "Couldn't open device %s: %s\n", dev, errbuf);
-		goto free_list;
+
+	/*
+	 * create handle for the file provided by user,
+	 * or open device to read.
+	 */
+	if (read_file == 1) {
+		handle = pcap_open_offline(file_name, errbuf);   //call pcap library function
+		if (handle == NULL) {
+			fprintf(stderr, "Couldn't open pcap file %s: %s\n", file_name, errbuf);
+			exit(EXIT_FAILURE);
+		} else {
+			printf("Opened file %s\n\n", file_name);
+		}
 	} else {
-		printf("Listening on device: %s\n\n", dev);
+		handle = pcap_open_live(dev, BUFSIZ, PROMISC, READ_TIME_OUT, errbuf);
+		if (handle == NULL) {
+			fprintf(stderr, "Couldn't open device %s: %s\n", dev, errbuf);
+			exit(EXIT_FAILURE);
+		} else {
+			printf("Listening on device: %s\n\n", dev);
+		}
 	}
+
 
 	/* Generate final BPF filter string */
 	if (bpf_filter == 1) {
@@ -377,12 +380,5 @@ int main(int argc, char *argv[])
 
 free_filter:
 	free(filter_exp);
-free_list:
-// 	current = head;
-// 	while (current != NULL) {
-// 		free_this = current;
-// 		current = current->next;
-// 		free(free_this);
-// 	}
 	return 0;
 }
