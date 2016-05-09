@@ -27,6 +27,8 @@
 #define PACKET_SIZE 8192
 #define MAX_ARRAY_SIZE 1000
 
+/* Reference: http://www.ccs.neu.edu/home/amislove/teaching/cs4700/fall09/handouts/project1-primer.pdf */
+
 /* Ethernet header */
 struct ethernet_header {
 	u_char ether_dhost[ETHER_ADDR_LEN];
@@ -52,29 +54,17 @@ struct dns_question {
 	char qclass[2];
 };
 
-/* DNS answer structure */
-struct dns_answer {
-	char *name;
-	char type[2];
-	char class[2];
-	char ttl[4];
-	char rd_length[2];
-	char *r_data;
-};
 
-
-static int start_db_index = 0;
-static int end_db_index = -1;
+/* used for easy addition */
 static int array_size = 0;
 
-/* Link list node for file options */
+/* Node representing data in the database */
 struct node {
-	u_short id;
+	u_short id;	// Keeping as u_short as easy to store, compare and handle DB
 	int list_size;
 	char ip[20][32];
 	struct node *next;
 };
-
 
 
 /* The callback function for pcap_loop */
@@ -82,45 +72,29 @@ void dns_detect(struct node *database, const struct pcap_pkthdr *header, const u
 {
 	struct ethernet_header *ether;
 	struct iphdr *ip;
-	struct udphdr *udp, *reply_udp_hdr;
-	struct ip *reply_ip_hdr;
+	struct udphdr *udp;
 	struct dns_question question;
-	struct dns_answer answer;
 	struct dns_header *dns_hdr;
-	char src_ip[IP_SIZE], dst_ip[IP_SIZE];
-	unsigned int ip_header_size;
-	u_int16_t port;
+	u_int ip_header_size;
 	char request[150], *domain_name;
-	char reply_packet[PACKET_SIZE];
 	int size, i = 1, j = 0, k;
-	unsigned int reply_packet_size;
-	char spoof_ip[32], *reply;
-	unsigned char split_ip[4];
-	struct in_addr dest, src;
-	int spoof_it = 0;
-	int attack_detected = 0;
-	char *new_ip;
-	int matched, curr_index, possible_attack;
+	int possible_attack;
 	char new_ip_list[20][32];
-	char IP[100];
+	char ip_from_pkt[32];
 	int id_found;
-	char *temp;
 	char *hex_id;
-	int epoch_time;				/* for calculating time for packet */
+	int index_in_db;
+	u_short id;
+	char *answer_start;
+	u_int ip_index;
+	u_short type, class, resp_size;
+	int epoch_time;		/* for calculating time for packet */
 	time_t epoch_time_as_time_t;
 	struct tm * timeinfo;
-	int index_in_db;
 
 	/* define ethernet header */
 	ether = (struct ethernet_header*)(packet);
-	// ip = (struct iphdr*)(((char*) ether) + sizeof(struct ethernet_header));
 	ip = (struct iphdr*)(((char*)packet) + 14);
-
-	/* get cleaned up IPs */
-	src.s_addr = ip->saddr;
-	dest.s_addr = ip->daddr;
-	sprintf(src_ip, "%s", inet_ntoa(src));
-	sprintf(dst_ip, "%s", inet_ntoa(dest));
 
 	/* udp header */
 	ip_header_size = ip->ihl * 4;
@@ -148,51 +122,54 @@ void dns_detect(struct node *database, const struct pcap_pkthdr *header, const u
 	}
 	request[--j] = '\0';
 
-	char *answer_start = (char *)question.qname + j + 6;
+	/* start of answer */
+	answer_start = (char *)question.qname + j + 6;
 
-	char identifier[100];
-	char str[2];
-	u_short id = *((u_short *)dns_hdr->id);
+	/* Saving current ID of DNS */
+	id = *((u_short *)dns_hdr->id);
 	hex_id = dns_hdr->id;
-	sprintf(identifier, "%hu", *((u_short *)dns_hdr->id));
+
 	possible_attack = 0;
-	k = 0;
+	k = 0;	// This value of k is used as a reference in other places. Shouldn't be touched.
 	for (i = 0; i < htons(*((u_short *)(dns_hdr->ancount))); i++) {
-		u_short type = ((u_short *)(answer_start + 2))[0];
-		u_short class = ((u_short *)(answer_start + 4))[0];
-		u_short resp_size = ((u_short *)(answer_start + 10))[0];
+		type = ((u_short *)(answer_start + 2))[0];
+		class = ((u_short *)(answer_start + 4))[0];
+		resp_size = ((u_short *)(answer_start + 10))[0];
 
-		// printf("Type: %d\n", htons(type));
-		// printf("Class: %d\n", htons(class));
-		// printf("resp size %d\n", htons(resp_size));
-
-		int ip_exists = 0;
 		id_found = 0;
+		if (htons(type) == 1) {	// Evaluate only if Type A
+			ip_index = ((u_int *)(answer_start + 12))[0]; // get index of IP in packet
+			sprintf(ip_from_pkt, "%u.%u.%u.%u", ((u_char *)(&ip_index))[0],
+			        ((u_char *)(&ip_index))[1],
+			        ((u_char *)(&ip_index))[2],
+			        ((u_char *)(&ip_index))[3]);
 
-		if (htons(type) == 1) {
-			u_int IPi = ((u_int *)(answer_start + 12))[0];
-			sprintf(IP, "%u.%u.%u.%u", ((u_char *)(&IPi))[0], ((unsigned char *)(&IPi))[1], ((unsigned char *)(&IPi))[2], ((unsigned char *)(&IPi))[3]);
-
-			// printf("***id = %hu\n", id);
-			// add to db
-			for (i = 0; i < array_size; i++) {
-				if (id == database[i].id) {
-					index_in_db = i;
+			/* check if ID already present in database, and hence an attack */
+			for (j = 0; j < array_size; j++) {
+				if (id == database[j].id) {
+					index_in_db = j;
 					possible_attack = 1;
 					id_found = 1;
 				}
 			}
 
-			strcpy(new_ip_list[k++], IP);
+			/* creat a list of all the IPs in this answer */
+			strcpy(new_ip_list[k++], ip_from_pkt);
 
+			/* new answer starts at previous answer position + 16 (size of type A) */
 			answer_start = answer_start + 16;
-		} else {
+		} else {	// skip evaluating other types (like type CNAME for instance)
+			/* new answer starts at previous answer position
+			 * + 12 (all fields excpt response size)
+			 * + response size
+			 */
 			answer_start = answer_start + 12 + htons(resp_size);
 		}
 
 
 	}
 
+	/* entry not found in DB, create new entry */
 	if (id_found == 0) {
 		for (i = 0; i < k; i++) {
 			database[array_size].id = id;
@@ -202,7 +179,9 @@ void dns_detect(struct node *database, const struct pcap_pkthdr *header, const u
 		array_size += 1;
 	}
 
+	/* warn user if possible attack */
 	if (possible_attack == 1) {
+		/* get time from packet header */
 		epoch_time = header->ts.tv_sec;
 		epoch_time_as_time_t = epoch_time;
 		timeinfo = localtime(&epoch_time_as_time_t);
@@ -210,12 +189,12 @@ void dns_detect(struct node *database, const struct pcap_pkthdr *header, const u
 		printf("\nDNS poisoning attempt detected!!!\n");
 		printf("Timestamp: %s", asctime(timeinfo));
 		printf("TXID: 0x");
-		printf("%x", (int)(*(unsigned char*)(hex_id)));
-		printf("%x\t", (int)(*(unsigned char*)(hex_id + 1)));
+		printf("%x", (int)(*(u_char *)(hex_id)));
+		printf("%x\t", (int)(*(u_char *)(hex_id + 1)));
 		printf("Request: %s\n", request);
 		printf("Answer1 [");
-		for(i = 0; i< database[index_in_db].list_size; i++) {
-			if(i+1 == database[index_in_db].list_size) {
+		for (i = 0; i < database[index_in_db].list_size; i++) {
+			if (i + 1 == database[index_in_db].list_size) {
 				printf("%s", database[index_in_db].ip[i]);
 			} else {
 				printf("%s, ", database[index_in_db].ip[i]);
@@ -223,8 +202,8 @@ void dns_detect(struct node *database, const struct pcap_pkthdr *header, const u
 		}
 		printf("]\n");
 		printf("Answer2 [");
-		for(i = 0; i< k; i++) {
-			if(i+1 == k) {
+		for (i = 0; i < k; i++) {
+			if (i + 1 == k) {
 				printf("%s", new_ip_list[i]);
 			} else {
 				printf("%s, ", new_ip_list[i]);
@@ -277,15 +256,13 @@ int main(int argc, char *argv[])
 			read_file = 1;
 			break;
 		case 'h':
-			printf("help: dnsinject [-i interface] [-f hostnames] <expression>\n"
-			       "-i  Listen on network device <interface> "
-			       "(e.g., eth0). If not specified, dnsinject selects the default "
-			       "interface to listen on.\n-f  Spoof only the domains mentioned "
-			       "in the given file. If no file is provided all the DNS requests "
-			       "coming to the attacker will be spoofed\n<expression> is a BPF "
-			       "filter that specifies a subset of the traffic to be monitored. "
-			       "This option is useful for targeting a single or a set of "
-			       "particular victims\n");
+			printf("help: dnsdetect [-i interface] [-r tracefile] <expression>\n"
+			       "-i  Listen on network device <interface> (e.g., eth0). "
+			       "If not specified, the program should select a default "
+			       "interface to listen on.\n-r  Read packets from <tracefile> "
+			       "(tcpdump format). Useful for detecting DNS poisoning attacks "
+			       "in existing network traces.\n<expression> is a BPF filter "
+			       "that specifies a subset of the traffic to be monitored.\n");
 			exit(EXIT_SUCCESS);
 			break;
 		default:
