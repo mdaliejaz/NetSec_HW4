@@ -255,6 +255,13 @@ my_trace.pcap	Sample trace file generated with attack through dnsinject.
 
 
 
+To generate executables:
+========================
+make 		- generates the executables
+make clean	- deletes the generated executables
+
+
+
 Test Setup:
 ============
 I used VMware Fusion to set up two ubuntu 16.04 LTS virtual machines
